@@ -3,7 +3,7 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime
 
-HOST, PORT = "127.0.0.1", 8000
+HOST, PORT = "141.24.111.52", 20202
 STORE, LOCK = {}, threading.Lock()
 
 def convo_id(a, b): return "__".join(sorted([a, b]))
@@ -32,7 +32,6 @@ class Handler(BaseHTTPRequestHandler):
         if not (s and t and ts and msg):
             return self._json({"error": "missing fields"}, 400)
 
-        # optional timestamp check
         try: datetime.fromisoformat(ts)
         except Exception: pass
 
@@ -52,21 +51,30 @@ class Handler(BaseHTTPRequestHandler):
         from_user = qs.get("from_user", [None])[0]
         to_user = qs.get("to", [None])[0] or qs.get("to", [None])[0]
 
-        def ok(m):
-            return (not since) or (m.get("timestamp", "") > since)
+        def newer(m):
+            if since:
+                try:
+                    return m.get("timestamp", "") > since
+                except Exception:
+                    return True
+            return True  # when since is None, accept all
 
         res = []
         with LOCK:
             if from_user and to_user:
-                res = [m for m in STORE.get(convo_id(from_user, to_user), []) if ok(m)]
+                # return full convo if since is None, else only newer messages
+                msgs = STORE.get(convo_id(from_user, to_user), [])
+                res = [m for m in msgs if newer(m)]
             else:
+                # aggregate across all convos
                 for msgs in STORE.values():
-                    res.extend(m for m in msgs if ok(m))
+                    for m in msgs:
+                        if newer(m):
+                            res.append(m)
                 res.sort(key=lambda x: x.get("timestamp", ""))
         return self._json(res, 200)
 
-    def log_message(self, *a):
-        print(a)
+    def log_message(self, *a): pass
 
 if __name__ == "__main__":
     srv = ThreadingHTTPServer((HOST, PORT), Handler)
